@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anomaly Detection Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .anomaly-card {
+            border-left: 4px solid #dc3545;
+            background-color: #fff5f5;
+        }
+        .normal-card {
+            border-left: 4px solid #28a745;
+            background-color: #f8fff8;
+        }
+        .stats-card {
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .refresh-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">🔍 Anomaly Detection Dashboard</span>
+            <button class="btn btn-outline-light" onclick="refreshData()">Refresh Data</button>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Statistics Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="stats-card text-center">
+                    <h5 class="text-muted">Total Events</h5>
+                    <h2 id="totalEvents" class="text-primary">-</h2>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stats-card text-center">
+                    <h5 class="text-muted">Anomalies Detected</h5>
+                    <h2 id="anomaliesCount" class="text-danger">-</h2>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stats-card text-center">
+                    <h5 class="text-muted">Normal Events</h5>
+                    <h2 id="normalCount" class="text-success">-</h2>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stats-card text-center">
+                    <h5 class="text-muted">Detection Rate</h5>
+                    <h2 id="detectionRate" class="text-info">-</h2>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Anomaly Distribution</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="anomalyChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Event Timeline</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="timelineChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Anomalies -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Recent Events</h5>
+                        <small class="text-muted">Latest anomalies and normal events</small>
+                    </div>
+                    <div class="card-body">
+                        <div id="eventsContainer"></div>
+                        <div id="loading" class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Refresh Button -->
+    <button class="btn btn-primary btn-lg rounded-circle refresh-btn" onclick="refreshData()" title="Refresh Data">
+        🔄
+    </button>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let anomalyChart, timelineChart;
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeCharts();
+            loadData();
+            // Auto-refresh every 30 seconds
+            setInterval(loadData, 30000);
+        });
+
+        function initializeCharts() {
+            // Anomaly Distribution Chart
+            const ctx1 = document.getElementById('anomalyChart').getContext('2d');
+            anomalyChart = new Chart(ctx1, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Normal', 'Anomalies'],
+                    datasets: [{
+                        data: [0, 0],
+                        backgroundColor: ['#28a745', '#dc3545'],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+
+            // Timeline Chart
+            const ctx2 = document.getElementById('timelineChart').getContext('2d');
+            timelineChart = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Anomalies per Hour',
+                        data: [],
+                        borderColor: '#dc3545',
+                        backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        async function loadData() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                
+                // Fetch data from Flask API
+                const response = await fetch('/api/anomalies');
+                const data = await response.json();
+                
+                updateStatistics(data.statistics);
+                updateCharts(data);
+                displayEvents(data.events);
+                
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showError('Failed to load data. Please try again.');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function updateStatistics(stats) {
+            document.getElementById('totalEvents').textContent = stats.total_events;
+            document.getElementById('anomaliesCount').textContent = stats.anomalies;
+            document.getElementById('normalCount').textContent = stats.normal;
+            document.getElementById('detectionRate').textContent = stats.detection_rate + '%';
+        }
+
+        function updateCharts(data) {
+            // Update anomaly distribution chart
+            anomalyChart.data.datasets[0].data = [data.statistics.normal, data.statistics.anomalies];
+            anomalyChart.update();
+
+            // Update timeline chart
+            if (data.timeline) {
+                timelineChart.data.labels = data.timeline.labels;
+                timelineChart.data.datasets[0].data = data.timeline.data;
+                timelineChart.update();
+            }
+        }
+
+        function displayEvents(events) {
+            const container = document.getElementById('eventsContainer');
+            container.innerHTML = '';
+            
+            events.forEach(event => {
+                const cardClass = event.is_anomaly ? 'anomaly-card' : 'normal-card';
+                const badgeClass = event.is_anomaly ? 'bg-danger' : 'bg-success';
+                const badgeText = event.is_anomaly ? 'ANOMALY' : 'NORMAL';
+                
+                const eventCard = `
+                    <div class="card mb-2 ${cardClass}">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="card-title mb-1">
+                                        <span class="badge ${badgeClass} me-2">${badgeText}</span>
+                                        ${event.source_ip} → ${event.destination_ip}
+                                    </h6>
+                                    <p class="card-text text-muted mb-1">
+                                        <strong>Port:</strong> ${event.destination_port} | 
+                                        <strong>Protocol:</strong> ${event.protocol} | 
+                                        <strong>Bytes:</strong> ${event.bytes_transferred}
+                                    </p>
+                                    ${event.is_anomaly ? `<p class="card-text"><small class="text-danger"><strong>Risk Score:</strong> ${event.anomaly_score.toFixed(3)}</small></p>` : ''}
+                                </div>
+                                <div class="text-end">
+                                    <small class="text-muted">${new Date(event.timestamp).toLocaleString()}</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += eventCard;
+            });
+        }
+
+        function refreshData() {
+            loadData();
+        }
+
+        function showError(message) {
+            const errorDiv = `
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+            document.querySelector('.container-fluid').insertAdjacentHTML('afterbegin', errorDiv);
+        }
+    </script>
+</body>
+</html>
